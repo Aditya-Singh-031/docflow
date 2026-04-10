@@ -1,7 +1,6 @@
-version: "3.9"
-
 services:
-  # ── PostgreSQL ────────────────────────────────────────────────────
+
+  # PostgreSQL
   db:
     image: postgres:15-alpine
     container_name: docflow_db
@@ -19,8 +18,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - docflow_net
 
-  # ── Redis ─────────────────────────────────────────────────────────
+  # Redis
   redis:
     image: redis:7-alpine
     container_name: docflow_redis
@@ -35,8 +36,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - docflow_net
 
-  # ── FastAPI Backend ───────────────────────────────────────────────
+  # FastAPI Backend
   backend:
     build:
       context: ./backend
@@ -52,7 +55,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
       - uploads_data:/app/uploads
     depends_on:
       db:
@@ -61,9 +63,16 @@ services:
         condition: service_healthy
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - docflow_net
 
-  # ── Celery Worker ─────────────────────────────────────────────────
+  # Celery Worker
   worker:
     build:
       context: ./backend
@@ -77,16 +86,19 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     volumes:
-      - ./backend:/app
       - uploads_data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backend:
+        condition: service_healthy
     command: celery -A app.workers.celery_app worker --loglevel=info --queues=documents --concurrency=2
+    networks:
+      - docflow_net
 
-  # ── Celery Flower (monitoring UI) ─────────────────────────────────
+  # Celery Flower
   flower:
     build:
       context: ./backend
@@ -102,24 +114,35 @@ services:
       - redis
       - worker
     command: celery -A app.workers.celery_app flower --port=5555
+    networks:
+      - docflow_net
 
-  # ── Next.js Frontend ──────────────────────────────────────────────
+  # Next.js Frontend
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_APP_NAME: DocFlow
     container_name: docflow_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_APP_NAME: DocFlow
+      NODE_ENV: production
+      INTERNAL_API_URL: http://backend:8000
     ports:
       - "3000:3000"
     depends_on:
-      - backend
-    command: npm run dev
+      backend:
+        condition: service_healthy
+    networks:
+      - docflow_net
 
 volumes:
   postgres_data:
   redis_data:
   uploads_data:
+
+networks:
+  docflow_net:
+    driver: bridge
