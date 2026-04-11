@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
-from pydantic import AnyHttpUrl, field_validator
-from typing import List, Optional
+from pydantic import field_validator
+from typing import List
 import secrets
 
 
@@ -23,11 +23,20 @@ class Settings(BaseSettings):
     @classmethod
     def assemble_cors_origins(cls, v):
         if isinstance(v, str):
-            return [i.strip() for i in v.split(",")]
+            import json
+            try:
+                return json.loads(v)
+            except Exception:
+                return [i.strip() for i in v.split(",")]
         return v
 
     # Database
     DATABASE_URL: str = "postgresql://docflow_user:docflow_pass@localhost:5432/docflow_db"
+
+    # Postgres (used by Docker Compose — declare so pydantic doesn't reject them)
+    POSTGRES_USER: str = "docflow"
+    POSTGRES_PASSWORD: str = "docflow123"
+    POSTGRES_DB: str = "docflow_db"
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -51,9 +60,14 @@ class Settings(BaseSettings):
         ".png", ".jpg", ".jpeg", ".csv", ".xlsx"
     ]
 
+    # Frontend (declare so pydantic ignores them gracefully)
+    NEXT_PUBLIC_API_URL: str = "http://localhost:3000"
+    NEXT_PUBLIC_APP_NAME: str = "DocFlow"
+
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"   # ← KEY: ignore any extra env vars not in the model
 
 
 settings = Settings()
